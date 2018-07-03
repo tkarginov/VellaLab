@@ -1,0 +1,235 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Original Authors: Belinda Phipson, Anna Trigos, Matt Ritchie, Maria Doyle, Harriet Dashnow, Charity Law**
+Based on the course [RNAseq analysis in R](http://combine-australia.github.io/2016-05-11-RNAseq/) delivered on May 11/12th 2016
+
+Before starting this section, we will make sure we have all the relevant objects from the Differential Expression analysis present.
+
+```{r}
+suppressPackageStartupMessages(library(edgeR))
+load("DEdata/AP159/AP159_1h_6vs1_DE.Rdata")
+```
+
+
+```{r Rapid Run-Save}
+suppressPackageStartupMessages(library(edgeR))
+load("DEdata/AP117/AP117_4h_6vs1_DE.Rdata")
+
+#Covnert previous log data to dataframe 
+results <- as.data.frame(topTags(lrt.pVsV,n = Inf))
+results<-results[order(results$logFC, decreasing=T),]
+
+#Load annotation packages
+library(org.Mm.eg.db)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+tx <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+#Read annotation table in
+genes<-read.table("NCBI Gene Database/geneInfo.txt",sep="\t",quote="\"",na.strings="-",fill=TRUE, col.names=c("GeneID","Symbol","TypeOfGene"))
+results$Symbol<-noquote(rownames(results))
+
+#Merge results with annotated table in order to create finalized list in prep for chromosome assignment
+Results_Annotated_Final<-merge(results,genes, by="Symbol")
+Results_Annotated_Final<-Results_Annotated_Final[order(Results_Annotated_Final$logFC, decreasing=T),]
+```
+```{r}
+#Save top 200 genes with highest log fold changes (positive only here)
+top200_logFCgenes_170_1h_2vs1<-Results_Annotated_Final[1:200,]
+save(top200_logFCgenes_170_1h_2vs1,file="Top 200 Genes/Cyt 2 vs Cyt Stim 1/AP170/AP170_1h_2vs1_Top.Rdata")
+
+```
+
+```{r}
+rownames(top200_logFCgenes_159_1h_2vs1)<-top200_logFCgenes_159_1h_2vs1$Symbol
+rownames(top200_logFCgenes_170_1h_2vs1)<-top200_logFCgenes_170_1h_2vs1$Symbol
+rownames(top200_logFCgenes_159_2h_2vs1)<-top200_logFCgenes_159_2h_2vs1$Symbol
+rownames(top200_logFCgenes_117_2h_2vs1)<-top200_logFCgenes_117_2h_2vs1$Symbol
+rownames(top200_logFCgenes_155_2h_2vs1)<-top200_logFCgenes_155_2h_2vs1$Symbol
+rownames(top200_logFCgenes_117_4h_2vs1)<-top200_logFCgenes_117_4h_2vs1$Symbol
+
+ dflist<-list(top200_logFCgenes_159_1h_2vs1,top200_logFCgenes_170_1h_2vs1)
+TopOverlap_1hTimepoint<-Reduce(intersect,lapply(dflist,rownames))
+
+dflist2<-list(top200_logFCgenes_159_2h_2vs1,top200_logFCgenes_155_2h_2vs1)
+TopOverlap_2hTimepoint<-Reduce(intersect,lapply(dflist2,rownames))
+
+TopOverlap_1hTimepoint<-as.data.frame(TopOverlap_1hTimepoint)
+TopOverlap_2hTimepoint<-as.data.frame(TopOverlap_2hTimepoint)
+
+rownames(TopOverlap_1hTimepoint)<-TopOverlap_1hTimepoint[,1]
+rownames(TopOverlap_2hTimepoint)<-TopOverlap_2hTimepoint[,1]
+
+rownames(top200_logFCgenes_117_4h_2vs1)<-top200_logFCgenes_117_4h_2vs1$Symbol
+
+dflist3<-list(top200_logFCgenes_159_2h_2vs1,top200_logFCgenes_155_2h_2vs1,top200_logFCgenes_159_1h_2vs1,top200_logFCgenes_170_1h_2vs1)
+TopOverlap_General<-Reduce(intersect,lapply(dflist3,rownames))
+
+
+dflist4<-list(TopOverlap_2hTimepoint,TopOverlap_1hTimepoint,top200_logFCgenes_117_4h_2vs1)
+TopOverlap_Generalw4<-Reduce(intersect,lapply(dflist4,rownames))
+
+TopOverlap_Generalw4<-as.data.frame(TopOverlap_Generalw4)
+
+
+```
+
+```{r}
+TopOverlap_General_1hto2h<-top200_logFCgenes_159_2h[TopOverlap_General,]
+write.table(TopOverlap_General_1hto2h, "Top 200 Genes/TopOverlap_General_1hto2h.txt", sep="\t")
+keys <- as.character(TopOverlap_General_1hto2h$GeneID)
+Chrom_result<- select(tx, keys=keys,
+       keytype = "GENEID",
+       columns=c("EXONCHROM","EXONSTART","EXONEND")
+      )
+keys <- as.character(Chrom_result$GENEID)
+GeneSymbol<- unlist(mget(x=keys, envir=org.Mm.egSYMBOL))
+#data with entrez ID and symbol added
+Chrom_result_symbol<-cbind(Chrom_result, GeneSymbol)
+#Data modified to fit chromPlot format
+ChromPlotData<-Chrom_result_symbol[,2:5]
+colnames(ChromPlotData)<- c("Chrom","Start","End","ID")
+
+
+```
+
+```{r}
+#Label by type of gene/get more info on the genes
+library(mygene)
+EntrezID<-as.character(Chrom_result_symbol$GENEID)
+res <- queryMany(EntrezID, scopes='entrezgene', fields=c('symbol', 'go'), species='mouse')
+res[4, 'go.MF'][[1]]
+```
+
+```{r}
+library(chromPlot)
+data(mm10_gap)
+head(mm10_gap)
+data("mm10_cytoBandIdeo")
+head("mm10_cytoBandIdeo")
+#Plot genes on chromosomal map
+chromPlot(bands=mm10_cytoBandIdeo,gaps=mm10_gap, annot1=ChromPlotData[1:300,], stat=ChromPlotData[1:300,], statCol="Value", noHist=TRUE, cex=1, statTyp="n")
+```
+# Overview
+
+- Visualising DE results
+- Getting annotation
+- Retrieving gene models
+- Exporting browser traecks
+- Visualising results with respect to genomic location
+
+
+
+We have a list of significantly differentially expressed genes, but the only annotation we can see is the Entrez Gene ID, which is not very informative. 
+```{r}
+results <- as.data.frame(topTags(lrt.pVsV,n = Inf))
+results<-results[order(results$logFC, decreasing=T),]
+dim(results)
+```
+
+`edgeR` provides a function `plotSmear` that allows us to visualise the results of a DE analysis. In a similar manner to the [*MA-plot* for microarray data](https://en.wikipedia.org/wiki/MA_plot), this plot shows the log-fold change against log-counts per million, with DE genes highlighted:
+
+```{r}
+summary(de <- decideTestsDGE(lrt.BvsL))
+detags <- rownames(dgeObj)[as.logical(de)]
+plotSmear(lrt.pVsV, de.tags=detags)
+```
+However, on such a plot it would be nice to add labels to highlight the genes with most evidence for being DE, or our favourite genes. To perform such a task we need to map between the identifiers we have in the `edgeR` output and more familiar names.
+
+Finally, we will look at sophisticated visualisations that allow us to incorporate information about the structure of a gene, level of sequencing coverage.
+
+## Adding annotation to the edgeR results
+
+There are a number of ways to add annotation, but we will demonstrate how to do this using the *org.Mm.eg.db* package. This package is one of several *organism-level* packages which are re-built every 6 months. These packages are listed on the [annotation section](http://bioconductor.org/packages/release/BiocViews.html#___AnnotationData) of the Bioconductor, and are installed in the same way as regular Bioconductor packages. An alternative approach is to use `biomaRt`, an interface to the [BioMart](http://www.biomart.org/) resource. BioMart is much more comprehensive, but the organism packages fit better into the Bioconductor workflow.
+
+
+```{r eval=FALSE}
+source("http://www.bioconductor.org/biocLite.R")
+biocLite("org.Mm.eg.db")
+# For Human
+biocLite("org.Hs.eg.db")
+```
+
+The packages are larger in size that Bioconductor software pacakges, but essentially they are databases that can be used to make *offline* queries. 
+
+```{r message=FALSE}
+library(org.Mm.eg.db)
+```
+
+## Retrieving Genomic Locations
+
+
+It might seem natural to add genomic locations to our annotation table, and possibly a bit odd that the `org.Mm.eg.db` package does not supply such mappings. In fact, there is a whole suite of package for performing this, and more-advanced queries that relate to the location of genes. These are listed on the Bioconductor [annotation page](http://bioconductor.org/packages/release/BiocViews.html#___AnnotationData) and have the prefix `TxDb.`
+
+The package we will be using is `TxDb.Mmusculus.UCSC.mm10.knownGene`. Packages are available for other organisms and genome builds. It is even possible to *build your own database* if one does not exist. See `vignette("GenomicFeatures")` for details
+
+```{r eval=FALSE}
+source("http://www.bioconductor.org/biocLite.R")
+biocLite("TxDb.Mmusculus.UCSC.mm10.knownGene")
+
+## For Humans
+biocLite("TxDb.Hsapiens.UCSC.hg19.knownGene")
+
+```
+
+We load the library in the usual fashion and create a new object to save some typing. As with the `org.` packages, we can query what columns are available with `columns`,
+
+```{r message=FALSE}
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+tx <- TxDb.Mmusculus.UCSC.mm10.knownGene
+columns(tx)
+
+
+```
+
+
+
+```{r}
+genes<-read.table("NCBI Gene Database/geneInfo.txt",sep="\t",quote="\"",na.strings="-",fill=TRUE, col.names=c("GeneID","Symbol","TypeOfGene"))
+dim(genes)
+results$Symbol<-noquote(rownames(results))
+
+
+Results_Annotated_Final<-merge(results,genes, by="Symbol")
+Results_Annotated_Final<-Results_Annotated_Final[order(Results_Annotated_Final$logFC, decreasing=T),]
+top20_logFCgenes<-Results_Annotated_Final[1:20,]
+save(top20_logFCgenes,file="Top 20 Genes/AP159/AP159_1h_6vs1_DE.Rdata")
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+TopOverlap_General_1hto4h<-top20_logFCgenes_159_2h[TopOverlap_General,]
+keys <- as.character(Results_Annotated_Final$GeneID)
+Chrom_result<- select(tx, keys=keys,
+       keytype = "GENEID",
+       columns=c("EXONCHROM","EXONSTART","EXONEND")
+      )
+keys <- as.character(Chrom_result$GENEID)
+GeneSymbol<- unlist(mget(x=keys, envir=org.Mm.egSYMBOL))
+#data with entrez ID and symbol added
+Chrom_result_symbol<-cbind(Chrom_result, GeneSymbol)
+#Data modified to fit chromPlot format
+ChromPlotData<-Chrom_result_symbol[,2:5]
+colnames(ChromPlotData)<- c("Chrom","Start","End","ID")
+
+
+```
+
+```{r}
+#Label by type of gene/get more info on the genes
+library(mygene)
+EntrezID<-as.character(Chrom_result_symbol$GENEID)
+res <- queryMany(EntrezID, scopes='entrezgene', fields=c('symbol', 'go'), species='mouse')
+res[4, 'go.MF'][[1]]
+```
+
+```{r}
+library(chromPlot)
+data(mm10_gap)
+head(mm10_gap)
+data("mm10_cytoBandIdeo")
+head("mm10_cytoBandIdeo")
+#Plot genes on chromosomal map
+chromPlot(bands=mm10_cytoBandIdeo,gaps=mm10_gap, annot1=ChromPlotData[1:300,], stat=ChromPlotData[1:300,], statCol="Value", noHist=TRUE, cex=1, statTyp="n")
+```
+

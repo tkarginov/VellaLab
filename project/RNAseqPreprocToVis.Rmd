@@ -1,0 +1,226 @@
+---
+title: "RNAseq PreProcToVis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(edgeR)
+library(limma)
+library(Glimma)
+library(gplots)
+library(org.Mm.eg.db)
+load("APFull_PreProc_CorrectedwithCounts.Rdata")
+```
+
+
+
+### Create the design matrix
+
+First we need to create a design matrix for the groups, as we have seen in the linear models lecture. 
+We have two variables, status and cell type. We will fit two models under two assumptions; no interaction and interaction of these two factors. 
+
+Let's start with the model with only main effects, that is no interaction. The main assumption here is that the effect of the status is the same in both type of cells.
+
+```{r}
+# Create the two variables
+group <- as.character(group)
+
+#Design 159
+CytokineStim <- sapply(strsplit(group[1:12], ".", fixed=T), function(x) x[1])
+# Specify a design matrix with an intercept term
+design159 <- model.matrix(~0+CytokineStim)
+design159
+
+#Design for 117, 170, 155
+CytokineStim <- sapply(strsplit(group[13:28], ".", fixed=T), function(x) x[1])
+# Specify a design matrix with an intercept term
+design_other <- model.matrix(~0+CytokineStim)
+design_other
+```
+
+
+
+### Estimating the dispersion
+
+The common dispersion estimates the overall BCV of the dataset, averaged over all genes:
+```{r}
+for(x in 1:6){
+dgeObj[[x]] <- estimateCommonDisp(dgeObj[[x]])
+}
+```
+
+Then we estimate gene-wise dispersion estimates, allowing a possible trend with averge count size:
+```{r}
+for(x in 1:6){
+dgeObj[[x]] <- estimateGLMTrendedDisp(dgeObj[[x]])
+dgeObj[[x]] <- estimateTagwiseDisp(dgeObj[[x]])
+}
+```
+# Fit the linear model
+```{r}
+fit159_1h <- glmFit(dgeObj[[1]], design159[1:6,])
+fit159_2h <- glmFit(dgeObj[[2]], design159[7:12,])
+fit117 <- glmFit(dgeObj[[3]], design_other[1:4,])
+fit117_4h <- glmFit(dgeObj[[4]], design_other[5:8,])
+fit170 <- glmFit(dgeObj[[5]], design_other[9:12,])
+fit155_2h <- glmFit(dgeObj[[6]], design_other[13:16,])
+```
+
+```{r}
+#
+PvsV <- makeContrasts(CytokineStim6-CytokineStim2, levels=design_other)
+lrt.pVsV <- glmLRT(fit117_4h, contrast=PvsV)
+results <- as.data.frame(topTags(lrt.pVsV,n = Inf))
+results<-results[order(results$logFC, decreasing=T),]
+
+#save(lrt.pVsV,dgeObj,group,file="AP155_2h_DE.Rdata")
+
+#Load annotation packages
+library(org.Mm.eg.db)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+tx <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+#Read annotation table in
+genes<-read.table("NCBI Gene Database/geneInfo.txt",sep="\t",quote="\"",na.strings="-",fill=TRUE, col.names=c("GeneID","Symbol","TypeOfGene"))
+results$Symbol<-noquote(rownames(results))
+
+#Merge results with annotated table in order to create finalized list in prep for chromosome assignment
+Results_Annotated_Final<-merge(results,genes, by="Symbol")
+Results_Annotated_Final<-Results_Annotated_Final[order(Results_Annotated_Final$logFC, decreasing=T),]
+
+#Save top 200 genes with highest log fold changes (positive only here)
+top200_logFCgenes_170_1h<-Results_Annotated_Final[1:200,]
+#save(top200_logFCgenes_155_2h,file="Top 200 Genes/Cyt 6 vs Cyt Stim 2/AP155/AP155_2h_Top.Rdata")
+```
+
+```{r}
+#Fix rownames
+rownames(top200_logFCgenes_159_1h)<-top200_logFCgenes_159_1h$Symbol
+rownames(top200_logFCgenes_170_1h)<-top200_logFCgenes_170_1h$Symbol
+rownames(top200_logFCgenes_159_2h)<-top200_logFCgenes_159_2h$Symbol
+rownames(top200_logFCgenes_117_2h)<-top200_logFCgenes_117_2h$Symbol
+rownames(top200_logFCgenes_155_2h)<-top200_logFCgenes_155_2h$Symbol
+rownames(top200_logFCgenes_117_4h)<-top200_logFCgenes_117_4h$Symbol
+
+#The next chunk of code allows you to intersect different timepoints and see which genes overlap between datasets
+ dflist<-list(top200_logFCgenes_159_1h,top200_logFCgenes_170_1h)
+TopOverlap_1hTimepoint<-Reduce(intersect,lapply(dflist,rownames))
+
+dflist2<-list(top200_logFCgenes_159_2h,top200_logFCgenes_155_2h)
+TopOverlap_2hTimepoint<-Reduce(intersect,lapply(dflist2,rownames))
+
+TopOverlap_1hTimepoint<-as.data.frame(TopOverlap_1hTimepoint)
+TopOverlap_2hTimepoint<-as.data.frame(TopOverlap_2hTimepoint)
+
+
+rownames(TopOverlap_1hTimepoint)<-TopOverlap_1hTimepoint[,1]
+rownames(TopOverlap_2hTimepoint)<-TopOverlap_2hTimepoint[,1]
+
+rownames(top200_logFCgenes_117_4h)<-top200_logFCgenes_117_4h$Symbol
+TopGenes_4hTimepoint<-as.character(top200_logFCgenes_117_4h$Symbol)
+
+dflist3<-list(top200_logFCgenes_159_2h,top200_logFCgenes_155_2h,top200_logFCgenes_159_1h,top200_logFCgenes_170_1h)
+TopOverlap_General<-Reduce(intersect,lapply(dflist3,rownames))
+
+#With 117_4h dataset
+dflist4<-list(TopOverlap_1hTimepoint,TopOverlap_2hTimepoint,top200_logFCgenes_117_4h)
+TopOverlap_Generalw4<-Reduce(intersect,lapply(dflist4,rownames))
+
+TopOverlap_Generalw4<-as.data.frame(TopOverlap_Generalw4)
+
+
+
+```
+
+```{r}
+#Load annotation packages
+library(org.Mm.eg.db)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+tx <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+#Use the TopOverlap_General intersection above
+  dflist2<-list(top200_logFCgenes_159_2h,top200_logFCgenes_155_2h)
+TopOverlap_2hTimepoint<-Reduce(intersect,lapply(dflist2,rownames))
+
+  dflist4<-list(top200_logFCgenes_159_2h,top200_logFCgenes_155_2h,top200_logFCgenes_117_4h)
+TopOverlap_General_2h_4h<-Reduce(intersect,lapply(dflist4,rownames))
+
+  dflist4_1<-list(top200_logFCgenes_159_1h,top200_logFCgenes_170_1h,top200_logFCgenes_117_4h)
+TopOverlap_General_1h_4h<-Reduce(intersect,lapply(dflist4_1,rownames))
+
+ dflist4_2<-list(top200_logFCgenes_159_2h,top200_logFCgenes_155_2h,top200_logFCgenes_159_1h,top200_logFCgenes_170_1h,top200_logFCgenes_117_4h)
+TopOverlap_General_1h_2h_4h<-Reduce(intersect,lapply(dflist4_2,rownames))
+
+  dflist<-list(top200_logFCgenes_159_1h,top200_logFCgenes_170_1h)
+TopOverlap_1hTimepoint<-Reduce(intersect,lapply(dflist,rownames))
+
+TopOverlap_General_1h_2h_4h<-top200_logFCgenes_159_2h[TopOverlap_General_1h_2h_4h,]
+#write.table(TopOverlap_General_1hto2h, "Top 200 Genes/TopOverlap_General_1hto2h.txt", sep="\t")
+keys <- as.character(TopOverlap_General_2h_4h$GeneID)
+Chrom_result<- select(tx, keys=keys,
+       keytype = "GENEID",
+       columns=c("EXONCHROM","EXONSTART","EXONEND")
+      )
+keys <- as.character(Chrom_result$GENEID)
+GeneSymbol<- unlist(mget(x=keys, envir=org.Mm.egSYMBOL))
+#data with entrez ID and symbol added
+Chrom_result_symbol<-cbind(Chrom_result, GeneSymbol)
+#Data modified to fit chromPlot format
+ChromPlotData<-Chrom_result_symbol[,2:5]
+colnames(ChromPlotData)<- c("Chrom","Start","End","ID")
+
+
+```
+
+```{r}
+library(chromPlot)
+data(mm10_gap)
+head(mm10_gap)
+data("mm10_cytoBandIdeo")
+head("mm10_cytoBandIdeo")
+#Plot genes on chromosomal map
+chromPlot(bands=mm10_cytoBandIdeo,gaps=mm10_gap, annot1=ChromPlotData[1:300,], stat=ChromPlotData[1:300,], statCol="Value", noHist=TRUE, cex=1.25, statTyp="n")
+```
+
+```{r}
+## try http:// if https:// URLs are not supported
+source("https://bioconductor.org/biocLite.R")
+biocLite("ReactomePA")
+```
+
+```{r}
+x<-enrichPathway(gene=de, organism="mouse", pvalueCutoff=.05, readable=T)
+
+```
+
+```{r}
+## try http:// if https:// URLs are not supported
+source("https://bioconductor.org/biocLite.R")
+biocLite("gage")
+
+```
+
+```{r}
+library(gage)
+kg.mmu <- kegg.gsets( "mmu" )
+kegg.gs2 <- kg.mmu$kg.sets[ kg.mmu$sigmet.idx ]
+```
+
+```{r}
+
+E<-matrix(,nrow=nrow(top200_logFCgenes_170_1h),ncol=1)
+E[,1]<-top200_logFCgenes_170_1h$GeneID
+rownames(E)<-E[,1]
+E[,1]<-top200_logFCgenes_170_1h$logFC
+
+E2<-matrix(,nrow=nrow(top200_logFCgenes_170_1h_2vs1),ncol=1)
+E2[,1]<-top200_logFCgenes_170_1h_2vs1$GeneID
+rownames(E2)<-E2[,1]
+E2[,1]<-top200_logFCgenes_170_1h_2vs1$logFC
+```

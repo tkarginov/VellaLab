@@ -1,0 +1,138 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Original Authors: Belinda Phipson, Anna Trigos, Matt Ritchie, Maria Doyle, Harriet Dashnow, Charity Law**
+Based on the course [RNAseq analysis in R](http://combine-australia.github.io/2016-05-11-RNAseq/) delivered on May 11/12th 2016
+
+## Resources and data files
+
+This material has been created using the following resources:  
+http://www.statsci.org/smyth/pubs/QLedgeRPreprint.pdf [@Lun2016]  
+http://monashbioinformaticsplatform.github.io/RNAseq-DE-analysis-with-R/99-RNAseq_DE_analysis_with_R.html  
+
+Data files downloaded from:  
+ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE60nnn/GSE60450/suppl/GSE60450_Lactation-GenewiseCounts.txt.gz
+http://bioinf.wehi.edu.au/software/MSigDB/mouse_c2_v5.rdata
+http://bioinf.wehi.edu.au/software/MSigDB/mouse_H_v5.rdata
+
+Data files:  
+sampleinfo.txt  
+GSE60450_Lactation-GenewiseCounts.txt  
+mouse_c2_v5.rdata  
+mouse_H_v5.rdata
+
+Data files available from: [https://figshare.com/s/1d788fd384d33e913a2a](https://figshare.com/s/1d788fd384d33e913a2a)
+You should download these files and place them in your `/data` directory.
+
+## Differential expression with edgeR
+
+Now that we are happy that we have normalised the data and that the quality looks good, we can continue to testing for differentially expressed genes. There are a number of packages to analyse RNA-Seq data. Most people use DESEQ2 or edgeR. We will use edgeR for the rest of this practical.
+
+**First make sure we have all the objects and libraries loaded*
+
+```{r}
+library(edgeR)
+library(limma)
+library(Glimma)
+library(gplots)
+library(org.Mm.eg.db)
+load("APFull_PreProc.Rdata")
+```
+
+
+
+
+### Create the design matrix
+
+First we need to create a design matrix for the groups, as we have seen in the linear models lecture. 
+We have two variables, status and cell type. We will fit two models under two assumptions; no interaction and interaction of these two factors. 
+
+Let's start with the model with only main effects, that is no interaction. The main assumption here is that the effect of the status is the same in both type of cells.
+
+```{r}
+# Create the two variables
+group <- as.character(group)
+
+#Design 159
+CytokineStim <- sapply(strsplit(group[1:12], ".", fixed=T), function(x) x[1])
+# Specify a design matrix with an intercept term
+design159 <- model.matrix(~0+CytokineStim)
+design159
+
+#Design for 117, 170, 155
+CytokineStim <- sapply(strsplit(group[13:28], ".", fixed=T), function(x) x[1])
+# Specify a design matrix with an intercept term
+design_other <- model.matrix(~0+CytokineStim)
+design_other
+```
+
+
+
+### Estimating the dispersion
+
+The common dispersion estimates the overall BCV of the dataset, averaged over all genes:
+```{r}
+for(x in 1:6){
+dgeObj[[x]] <- estimateCommonDisp(dgeObj[[x]])
+}
+```
+
+Then we estimate gene-wise dispersion estimates, allowing a possible trend with averge count size:
+```{r}
+for(x in 1:6){
+dgeObj[[x]] <- estimateGLMTrendedDisp(dgeObj[[x]])
+dgeObj[[x]] <- estimateTagwiseDisp(dgeObj[[x]])
+}
+```
+Plot the estimated dispersions:
+```{r}
+for(x in 1:6){
+plotBCV(dgeObj[[x]])
+}
+```
+
+
+```{r}
+# Fit the linear model
+
+fit159_1h <- glmFit(dgeObj[[1]], design159[1:6,])
+fit159_2h <- glmFit(dgeObj[[2]], design159[7:12,])
+fit117 <- glmFit(dgeObj[[3]], design_other[1:4,])
+fit117_4h <- glmFit(dgeObj[[4]], design_other[5:8,])
+fit170 <- glmFit(dgeObj[[5]], design_other[9:12,])
+fit155_2h <- glmFit(dgeObj[[6]], design_other[13:16,])
+
+```
+
+
+
+### Contrasts
+
+Suppose we want to find differentially expressed genes between pregnant and virgin. We don't have a parameter that explicitly will allow us to test that hypothesis. We need to build a contrast:
+
+```{r}
+PvsV <- makeContrasts(CytokineStim6-CytokineStim2, levels=design_other)
+lrt.pVsV <- glmLRT(fit117_h, contrast=PvsV)
+results <- as.data.frame(topTags(lrt.pVsV,n = Inf))
+results<-results[order(results$logFC, decreasing=T),]
+
+```
+
+
+> ## Challenge {.challenge}
+>
+> 1.Fit a model with interaction: What is the rationale to include the interaction (What assumption are you relaxing?)
+> 2. Is the number of replicates good enough to include the interaction?
+> 3. Is the interaction needed in the model?
+
+**Solution**
+```{r,echo=FALSE}
+# Solution
+
+```
+
+```{r}
+save(lrt.pVsV,dgeObj,group,file="AP155_2h_6vs1_DE.Rdata")
+```
+
